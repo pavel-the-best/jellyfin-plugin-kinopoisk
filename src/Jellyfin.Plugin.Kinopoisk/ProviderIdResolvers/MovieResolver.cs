@@ -59,7 +59,70 @@ namespace Jellyfin.Plugin.Kinopoisk.ProviderIdResolvers
             if (possibleResult.IsSuccess)
                 return possibleResult;
 
-            _logger.LogDebug($"Suitable result not found");
+            _logger.LogDebug($"Suitable result not found, trying first couple of matches...");
+
+            possibleResult = await TryResolveByName(info, candidates, ct);
+            if (possibleResult.IsSuccess)
+                return possibleResult;
+        
+            return (false, 0);
+        }
+
+        public string LCS(string str1, string str2)
+        {
+            char[,] table = new char[str1.Length, str2.Length];
+
+            for (int i = 0; i < str1.Length; i++)
+            {
+                for (int j = 0; j < str2.Length; j++)
+                {
+                    if (str1[i] == str2[j])
+                        table[i, j] = table[i - 1, j - 1] + 1;
+                    else
+                        table[i, j] = Math.Max(table[i - 1, j], table[i, j - 1]);
+                }
+            }
+
+            return table[str1.Length - 1, str2.Length - 1];
+        }
+
+        public bool IsMatch(string target, string cand)
+        {
+            string common = lcs(target, cand);
+            if (common.Length < 0.8 * target.Length || common.Length < 0.5 * cand.Length || common.Length <= 6) {
+                return false;
+            }
+            return true;
+        }
+
+
+        public async Task<(bool isSuccess, int ProviderId)> TryResolveByName(info, candidates, ct)
+        {
+            var index = 0;
+            foreach (var candidate in candidates)
+            {
+                if (index++ > 3) {
+                    break;
+                }
+                try
+                {
+                    var film = await _kinopoiskApiClient.GetSingleFilm(candidate.FilmId, ct);
+                   
+                    if IsMatch(candidate.Name, film.NameRu) {
+                        _logger.LogDebug($"Found match: {candidate.FilmId} '{film.GetLocalName()}', setting KinopoiskProviderId to {candidate.FilmId}");
+                        return (true, candidate.FilmId);
+                    }
+
+                    _logger.LogDebug($"Skipping {film.NameRu}");
+                }
+
+                } catch (Exception e)
+                {
+                    _logger.LogError(e, $"Error while retrieving film {candidate.FilmId}");
+                    continue;
+                }
+            }
+
             return (false, 0);
         }
 
